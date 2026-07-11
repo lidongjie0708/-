@@ -1,0 +1,3 @@
+<template><nav v-if="totalPages>1" class="pagination"><button :disabled="page<=1" @click="$emit('change',page-1)">上一页</button><span>第 {{page}} / {{totalPages}} 页</span><button :disabled="page>=totalPages" @click="$emit('change',page+1)">下一页</button></nav></template>
+<script setup>defineProps({page:{type:Number,default:1},totalPages:{type:Number,default:1}});defineEmits(['change']);</script>
+<style scoped>.pagination{display:flex;align-items:center;justify-content:center;gap:14px;margin-top:20px;color:#64748b;font-size:13px}.pagination button{height:36px;border:1px solid #e2e8f0;border-radius:8px;background:white;padding:0 13px;color:#334155;font-weight:750}.pagination button:hover:not(:disabled){border-color:#0f766e;color:#0f766e}</style>

@@ -1,0 +1,37 @@
+.DS_Store
+Thumbs.db
+
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+python/.venv/
+.venv/
+
+# Local configuration
+.env
+*.local
+
+# IDE / editor
+.idea/
+.vscode/
+*.iml
+*.code-workspace
+
+# Local scratch files
+src/main/java/com/yuyuan/thumb/delete
+
+# Codex workspace scratch
+.agents/
+.uploads/

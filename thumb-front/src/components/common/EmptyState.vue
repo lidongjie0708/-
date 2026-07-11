@@ -1,0 +1,3 @@
+<template><div class="empty-state"><svg viewBox="0 0 24 24" fill="none"><path d="M4 7.5h16v11H4v-11Zm3-3h10l2 3H5l2-3Z" stroke="currentColor" stroke-width="1.7"/><path d="M9 13h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><strong>{{ title }}</strong><span>{{ description }}</span><slot /></div></template>
+<script setup>defineProps({title:{type:String,default:'暂无数据'},description:{type:String,default:'这里暂时还没有内容。'}});</script>
+<style scoped>.empty-state{display:grid;justify-items:center;gap:.65rem;border:1px dashed #cbd5e1;border-radius:12px;background:#fff;padding:48px 20px;color:#64748b;text-align:center}.empty-state svg{width:42px;color:#94a3b8}.empty-state strong{color:#334155;font-size:17px}.empty-state span{font-size:14px}</style>

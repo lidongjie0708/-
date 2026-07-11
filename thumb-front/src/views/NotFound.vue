@@ -1,0 +1,2 @@
+<template><main class="not-found"><section class="section-card"><span>404</span><h1>页面没有找到</h1><p>你访问的地址不存在，或者内容已经移动。</p><router-link class="btn btn-primary" to="/">返回首页</router-link></section></main></template>
+<style scoped>.not-found{display:grid;min-height:100vh;place-items:center;padding:20px}.not-found section{display:grid;width:min(440px,100%);justify-items:center;gap:14px;padding:48px 24px;text-align:center}.not-found span{color:#0f766e;font-size:64px;font-weight:950}.not-found h1{margin:0;font-size:24px}.not-found p{margin:0 0 8px;color:#64748b}</style>

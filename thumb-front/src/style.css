@@ -1,0 +1,279 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family:
+    Inter, 'SF Pro Display', 'PingFang SC', 'Microsoft YaHei', system-ui,
+    sans-serif;
+  color: #eef8f5;
+  background: #07110f;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --primary: #27d8b4;
+  --primary-dark: #16b894;
+  --page: #07110f;
+  --surface: rgba(14, 29, 26, 0.82);
+  --text: #eef8f5;
+  --muted: #8ca49e;
+  --border: rgba(174, 224, 211, 0.13);
+  --danger: #fb7185;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --radius: 20px;
+  --shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+  --glow: 0 0 0 1px rgba(39, 216, 180, 0.08), 0 20px 80px rgba(2, 16, 13, 0.5);
+}
+
+* {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background:
+    radial-gradient(
+      circle at 12% 2%,
+      rgba(20, 143, 119, 0.19),
+      transparent 27rem
+    ),
+    radial-gradient(
+      circle at 86% 18%,
+      rgba(73, 95, 217, 0.1),
+      transparent 30rem
+    ),
+    linear-gradient(180deg, #07110f 0, #091512 48%, #07100e 100%);
+  background-attachment: fixed;
+  color: var(--text);
+}
+body::before {
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+  content: '';
+  pointer-events: none;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+button,
+a,
+input,
+textarea,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+img {
+  display: block;
+  max-width: 100%;
+}
+#app {
+  min-height: 100vh;
+}
+
+@layer components {
+  .container-custom {
+    @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+  .btn {
+    @apply inline-flex h-11 items-center justify-center gap-2 rounded-xl px-5 text-sm font-bold transition focus:outline-none focus:ring-2;
+    letter-spacing: -0.01em;
+  }
+  .btn-primary {
+    @apply bg-primary text-slate-950 hover:bg-primary-dark focus:ring-primary;
+    box-shadow: 0 10px 30px rgba(39, 216, 180, 0.18);
+  }
+  .btn-outline {
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.045);
+    color: #d6e5e1;
+  }
+  .btn-outline:hover {
+    border-color: rgba(39, 216, 180, 0.42);
+    background: rgba(39, 216, 180, 0.08);
+    color: #75f0d4;
+  }
+  .btn-soft {
+    background: rgba(255, 255, 255, 0.07);
+    color: #c0d0cc;
+  }
+  .btn-danger {
+    background: rgba(251, 113, 133, 0.1);
+    color: #fda4af;
+  }
+  .surface {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    backdrop-filter: blur(18px);
+    box-shadow: var(--shadow);
+  }
+  .input-control {
+    @apply w-full rounded-xl px-4 py-3 text-sm outline-none transition;
+    border: 1px solid var(--border);
+    background: rgba(3, 13, 11, 0.62);
+    color: #e7f3f0;
+  }
+  .input-control::placeholder {
+    color: #607871;
+  }
+  .input-control:focus {
+    border-color: rgba(39, 216, 180, 0.65);
+    box-shadow: 0 0 0 3px rgba(39, 216, 180, 0.1);
+  }
+  .chip {
+    @apply inline-flex items-center rounded-full px-3 py-1 text-xs font-bold;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: #9db3ad;
+  }
+  .page-shell {
+    min-height: 100vh;
+    padding-bottom: 72px;
+  }
+  .section-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    backdrop-filter: blur(18px);
+    box-shadow: var(--glow);
+  }
+  .form-field {
+    display: grid;
+    gap: 7px;
+    color: #b8cbc6;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .form-error {
+    border: 1px solid rgba(251, 113, 133, 0.3);
+    border-radius: 12px;
+    background: rgba(127, 29, 29, 0.22);
+    color: #fda4af;
+    padding: 12px 14px;
+    font-size: 14px;
+  }
+  .form-success {
+    border: 1px solid rgba(52, 211, 153, 0.3);
+    border-radius: 12px;
+    background: rgba(6, 78, 59, 0.22);
+    color: #6ee7b7;
+    padding: 12px 14px;
+    font-size: 14px;
+  }
+}
+
+h1,
+h2,
+h3,
+strong {
+  text-wrap: balance;
+}
+h1,
+h2,
+h3 {
+  color: var(--text);
+  letter-spacing: -0.035em;
+}
+select {
+  color-scheme: dark;
+}
+select option {
+  background: #10201d;
+  color: #e7f3f0;
+}
+.page-shell :where(.section-card, .surface),
+.page :where(.section-card, .surface) {
+  color: #dce9e5;
+}
+.page-shell :where(.section-card, .surface) p,
+.page :where(.section-card, .surface) p {
+  color: #8ca49e !important;
+}
+.page-shell :where(.section-card, .surface) small,
+.page-shell :where(.section-card, .surface) span,
+.page :where(.section-card, .surface) small,
+.page :where(.section-card, .surface) span {
+  border-color: var(--border);
+}
+table {
+  color: #c8d8d4;
+}
+th,
+td {
+  border-color: var(--border) !important;
+}
+th {
+  color: #78928b !important;
+}
+td select {
+  border-color: var(--border) !important;
+  background: #0b1916;
+  color: #c9dad5;
+}
+td > button,
+.actions button {
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: #b9cdc7;
+}
+.markdown-body {
+  color: #bfd0cc !important;
+}
+.markdown-body :where(h1, h2, h3, h4) {
+  color: #f1fbf8;
+}
+.markdown-body :where(code, pre) {
+  border-radius: 10px;
+  background: #04100d;
+}
+.line-clamp-2,
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.line-clamp-2 {
+  -webkit-line-clamp: 2;
+}
+.line-clamp-3 {
+  -webkit-line-clamp: 3;
+}
+.api-loading {
+  cursor: progress;
+}
+::selection {
+  background: #27d8b4;
+  color: #03100d;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

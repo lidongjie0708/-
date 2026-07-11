@@ -1,0 +1,3 @@
+<template><span :class="['badge',tone]"><i></i><slot>{{ label }}</slot></span></template>
+<script setup>defineProps({label:{type:String,default:''},tone:{type:String,default:'neutral'}});</script>
+<style scoped>.badge{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:4px 9px;font-size:12px;font-weight:800}.badge i{width:6px;height:6px;border-radius:50%;background:currentColor}.neutral{background:#f1f5f9;color:#64748b}.success{background:#ecfdf5;color:#047857}.warning{background:#fffbeb;color:#b45309}.danger{background:#fef2f2;color:#b91c1c}.info{background:#eff6ff;color:#1d4ed8}</style>
