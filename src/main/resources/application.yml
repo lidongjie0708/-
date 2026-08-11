@@ -27,6 +27,8 @@ spring:
     username: guest
     password: guest
     virtual-host: /
+    publisher-confirm-type: correlated
+    publisher-returns: true
     listener:
       simple:
         acknowledge-mode: manual
@@ -55,6 +57,20 @@ management:
         http:
           server:
             requests: 0.5, 0.75, 0.9, 0.95, 0.99
+
+thumb:
+  reconcile:
+    max-mysql-rows: ${THUMB_RECONCILE_MAX_MYSQL_ROWS:100000}
+    mysql-page-size: ${THUMB_RECONCILE_MYSQL_PAGE_SIZE:1000}
+    cron: ${THUMB_RECONCILE_CRON:0 */5 * * * ?}
+  outbox:
+    batch-size: ${THUMB_OUTBOX_BATCH_SIZE:500}
+    publish-interval-ms: ${THUMB_OUTBOX_PUBLISH_INTERVAL_MS:1000}
+    parallelism: ${THUMB_OUTBOX_PARALLELISM:8}
+  refresh:
+    cron: ${THUMB_REFRESH_CRON:0 30 3 * * ?}
+  flush:
+    batch-size: ${THUMB_FLUSH_BATCH_SIZE:1000}
 
 # JWT 配置（密钥从环境变量读取，重启不失效）
 jwt:

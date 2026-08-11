@@ -3,6 +3,7 @@ package com.yuyuan.thumb.service.impl;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.ObjUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.yuyuan.thumb.config.RabbitMQAgentConfig;
@@ -20,17 +21,17 @@ import com.yuyuan.thumb.service.UserService;
 import com.yuyuan.thumb.util.RedisKeyUtil;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.RedisTemplate;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -47,10 +48,8 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog>
 
     @Resource
     @Lazy
+    @Qualifier("thumbServiceRabbitMQ")
     private ThumbService thumbService;
-
-    @Resource
-    private RedisTemplate<String, Object> redisTemplate;
     
     @Resource
     private UserMapper userMapper;
@@ -60,6 +59,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog>
 
     @Resource
     private OutboxEventService outboxEventService;
+
+    @Resource
+    private RedisTemplate<String, Object> redisTemplate;
 
     @Override
     public Page<BlogVO> pageBlogs(PageRequest pageRequest, HttpServletRequest request) {
@@ -126,6 +128,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog>
 
     @Override
     public BlogVO getBlogVO(Blog blog, User loginUser) {
+        fillRealTimeThumbCount(blog);
         BlogVO blogVO = new BlogVO();
         BeanUtil.copyProperties(blog, blogVO);
 
@@ -139,17 +142,14 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog>
 
     @Override
     public List<BlogVO> getBlogVOList(List<Blog> blogList, HttpServletRequest request) {
+        fillRealTimeThumbCounts(blogList);
         User loginUser = userService.getLoginUser(request);
         Map<Long, Boolean> blogIdHasThumbMap = new HashMap<>();
         if (ObjUtil.isNotEmpty(loginUser)) {
-            List<Object> blogIdList = blogList.stream().map(blog -> blog.getId().toString()).collect(Collectors.toList());
-            // 获取点赞
-            List<Object> thumbList = redisTemplate.opsForHash().multiGet(RedisKeyUtil.getUserThumbKey(loginUser.getId()), blogIdList);
-            for (int i = 0; i < thumbList.size(); i++) {
-                if (thumbList.get(i) == null) {
-                    continue;
+            for (Blog blog : blogList) {
+                if (thumbService.hasThumb(blog.getId(), loginUser.getId())) {
+                    blogIdHasThumbMap.put(blog.getId(), true);
                 }
-                blogIdHasThumbMap.put(Long.valueOf(blogIdList.get(i).toString()), true);
             }
         }
 
@@ -169,6 +169,32 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog>
             return new ArrayList<>();
         }
         return blogMapper.selectByAuthorId(user.getId());
+    }
+
+    @Override
+    public void fillRealTimeThumbCount(Blog blog) {
+        if (blog == null || blog.getId() == null) {
+            return;
+        }
+        fillRealTimeThumbCounts(List.of(blog));
+    }
+
+    @Override
+    public void fillRealTimeThumbCounts(List<Blog> blogs) {
+        if (blogs == null || blogs.isEmpty()) {
+            return;
+        }
+        List<Object> blogIds = blogs.stream()
+                .map(blog -> (Object) blog.getId().toString())
+                .toList();
+        List<Object> deltas = redisTemplate.opsForHash()
+                .multiGet(RedisKeyUtil.getBlogDeltaKey(), blogIds);
+        for (int i = 0; i < blogs.size(); i++) {
+            Blog blog = blogs.get(i);
+            long delta = deltas.get(i) == null ? 0L : Long.parseLong(deltas.get(i).toString());
+            long base = blog.getThumbCount() == null ? 0L : blog.getThumbCount();
+            blog.setThumbCount((int) Math.min(Integer.MAX_VALUE, Math.max(0L, base + delta)));
+        }
     }
 
     private String resolveSortField(String sortField) {
@@ -243,6 +269,20 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog>
     @Override
     public boolean updateByIdWithoutAgent(Blog blog) {
         return super.updateById(blog);
+    }
+
+    @Override
+    public void updateAgentFields(Long blogId, String summary, String tags, Integer embeddingStatus) {
+        LambdaUpdateWrapper<Blog> wrapper = new LambdaUpdateWrapper<>();
+        wrapper.eq(Blog::getId, blogId)
+                .set(Blog::getEmbeddingStatus, embeddingStatus);
+        if (summary != null) {
+            wrapper.set(Blog::getSummary, summary);
+        }
+        if (tags != null && !tags.isBlank()) {
+            wrapper.set(Blog::getTags, tags);
+        }
+        update(wrapper);
     }
 
     private void publishBlogAgentEvent(Blog blog, BlogAgentEvent.ActionType actionType) {

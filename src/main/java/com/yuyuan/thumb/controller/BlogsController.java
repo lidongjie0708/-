@@ -34,6 +34,7 @@ public class BlogsController {
     @GetMapping("/all")
     public BaseResponse<List<Blog>> getAllBlogs() {
         List<Blog> blogs = blogService.list();
+        blogService.fillRealTimeThumbCounts(blogs);
         return ResultUtils.success(blogs);
     }
 
@@ -41,6 +42,7 @@ public class BlogsController {
     public BaseResponse<List<Blog>> getMyBlogs() {
         String username = SecurityContextHolder.getContext().getAuthentication().getName();
         List<Blog> blogs = blogService.getByUsername(username);
+        blogService.fillRealTimeThumbCounts(blogs);
         return ResultUtils.success(blogs);
     }
 
@@ -50,6 +52,7 @@ public class BlogsController {
         if (blog == null) {
             return ResultUtils.error(404, "博客不存在");
         }
+        blogService.fillRealTimeThumbCount(blog);
         return ResultUtils.success(blog);
     }
 

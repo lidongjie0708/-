@@ -70,7 +70,7 @@ public class ThumbServiceImpl extends ServiceImpl<ThumbMapper, Thumb>
                     String fieldKey = blogId.toString();
                     Long realThumbId = thumb.getId();
                     redisTemplate.opsForHash().put(hashKey, fieldKey, realThumbId);
-                    cacheManager.putIfPresent(hashKey, fieldKey, realThumbId);
+                    cacheManager.put(hashKey, fieldKey, realThumbId);
                 }
                 // 更新成功才执行
                 return success;
@@ -105,7 +105,7 @@ public class ThumbServiceImpl extends ServiceImpl<ThumbMapper, Thumb>
                     String hashKey = ThumbConstant.USER_THUMB_KEY_PREFIX + loginUser.getId();
                     String fieldKey = blogId.toString();
                     redisTemplate.opsForHash().delete(hashKey, fieldKey);
-                    cacheManager.putIfPresent(hashKey, fieldKey, ThumbConstant.UN_THUMB_CONSTANT);
+                    cacheManager.put(hashKey, fieldKey, ThumbConstant.UN_THUMB_CONSTANT);
                 }
                 return success;
             });
@@ -123,7 +123,6 @@ public class ThumbServiceImpl extends ServiceImpl<ThumbMapper, Thumb>
     }
 
 }
-
 
 
 

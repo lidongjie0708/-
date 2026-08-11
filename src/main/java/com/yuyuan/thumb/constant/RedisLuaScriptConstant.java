@@ -118,4 +118,56 @@ public class RedisLuaScriptConstant {
             redis.call("HDEL", userThumbKey, blogId)
             return 1
             """, Long.class);
+
+    /**
+     * Like script with per-blog count delta. KEYS[1]=user state hash, KEYS[2]=delta hash,
+     * ARGV[1]=blogId, ARGV[2]=delta (+1). Returns -1 on duplicate like.
+     */
+    public static final RedisScript<Long> THUMB_SCRIPT_MQ_V2 = new DefaultRedisScript<>("""
+            local userThumbKey = KEYS[1]
+            local blogDeltaKey = KEYS[2]
+            local blogId = ARGV[1]
+            local delta = tonumber(ARGV[2])
+
+            if delta > 0 then
+                if redis.call("HEXISTS", userThumbKey, blogId) == 1 then
+                    return -1
+                end
+                redis.call("HSET", userThumbKey, blogId, 1)
+            else
+                if redis.call("HEXISTS", userThumbKey, blogId) == 0 then
+                    return -1
+                end
+                redis.call("HDEL", userThumbKey, blogId)
+            end
+
+            redis.call("HINCRBY", blogDeltaKey, blogId, delta)
+            return 1
+            """, Long.class);
+
+    /**
+     * Unlike script with per-blog count delta (same key layout as THUMB_SCRIPT_MQ_V2).
+     * ARGV[2]=delta (-1). Returns -1 when the user had not liked the blog.
+     */
+    public static final RedisScript<Long> UNTHUMB_SCRIPT_MQ_V2 = new DefaultRedisScript<>("""
+            local userThumbKey = KEYS[1]
+            local blogDeltaKey = KEYS[2]
+            local blogId = ARGV[1]
+            local delta = tonumber(ARGV[2])
+
+            if delta < 0 then
+                if redis.call("HEXISTS", userThumbKey, blogId) == 0 then
+                    return -1
+                end
+                redis.call("HDEL", userThumbKey, blogId)
+            else
+                if redis.call("HEXISTS", userThumbKey, blogId) == 1 then
+                    return -1
+                end
+                redis.call("HSET", userThumbKey, blogId, 1)
+            end
+
+            redis.call("HINCRBY", blogDeltaKey, blogId, delta)
+            return 1
+            """, Long.class);
 }

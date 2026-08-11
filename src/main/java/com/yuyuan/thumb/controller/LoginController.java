@@ -56,9 +56,9 @@ public class LoginController {
             log.info("认证成功: {}", authentication.getName());
             SecurityContextHolder.getContext().setAuthentication(authentication);
 
-            String token = jwtUtil.generateToken(loginDto.getUsername());
             User user = userService.login(loginDto.getUsername(), loginDto.getPassword());
             user.setPassword(null);
+            String token = jwtUtil.generateToken(user.getUsername(), user.getId(), user.getRole());
 
             Map<String, Object> data = new HashMap<>();
             data.put("token", token);

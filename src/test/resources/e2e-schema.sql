@@ -112,3 +112,10 @@ CREATE TABLE outbox_event (
   KEY idx_outbox_status_retry (status, next_retry_time),
   KEY idx_outbox_aggregate (aggregate_type, aggregate_id)
 );
+
+CREATE TABLE thumb_flush_batch (
+  batch_id VARCHAR(64) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (batch_id),
+  KEY idx_thumb_flush_batch_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

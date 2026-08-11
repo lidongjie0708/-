@@ -18,4 +18,16 @@ public class RedisKeyUtil {
         return ThumbConstant.TEMP_THUMB_KEY_PREFIX.formatted(time);
     }
 
+    public static String getBlogDeltaKey() {
+        return ThumbConstant.BLOG_DELTA_KEY;
+    }
+
+    public static String getBlogDeltaFlushingKey() {
+        return ThumbConstant.BLOG_DELTA_FLUSHING_KEY;
+    }
+
+    public static String getBlogDeltaFlushingBatchKey() {
+        return ThumbConstant.BLOG_DELTA_FLUSHING_BATCH_KEY;
+    }
+
 }

@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.yuyuan.thumb.monitor.RabbitErrorHandler;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -18,6 +20,7 @@ import org.springframework.context.annotation.Configuration;
  * RabbitMQ配置类
  */
 @Configuration
+@Slf4j
 public class RabbitMQConfig {
 
     // 交换机名称
@@ -60,6 +63,16 @@ public class RabbitMQConfig {
     public RabbitTemplate rabbitTemplate(ConnectionFactory connectionFactory,ObjectMapper objectMapper) {
         RabbitTemplate rabbitTemplate = new RabbitTemplate(connectionFactory);
         rabbitTemplate.setMessageConverter(jsonMessageConverter(objectMapper));
+        // Unroutable events are returned by the broker instead of being silently dropped.
+        rabbitTemplate.setMandatory(true);
+        rabbitTemplate.setConfirmCallback((correlationData, ack, cause) -> {
+            if (!ack) {
+                log.warn("RabbitMQ publish NACK: correlation={}, cause={}", correlationData, cause);
+            }
+        });
+        rabbitTemplate.setReturnsCallback(returned ->
+                log.warn("RabbitMQ message unroutable: exchange={}, routingKey={}, replyText={}",
+                        returned.getExchange(), returned.getRoutingKey(), returned.getReplyText()));
         return rabbitTemplate;
     }
 
@@ -67,7 +80,7 @@ public class RabbitMQConfig {
      * 监听器容器工厂配置
      */
     @Bean
-    public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(ConnectionFactory connectionFactory,ObjectMapper objectMapper) {
+    public SimpleRabbitListenerContainerFactory rabbitListenerContainerFactory(ConnectionFactory connectionFactory,ObjectMapper objectMapper, RabbitErrorHandler rabbitErrorHandler) {
         SimpleRabbitListenerContainerFactory factory = new SimpleRabbitListenerContainerFactory();
         factory.setConnectionFactory(connectionFactory);
         factory.setMessageConverter(jsonMessageConverter(objectMapper));
@@ -75,6 +88,7 @@ public class RabbitMQConfig {
         factory.setMaxConcurrentConsumers(10);
         factory.setPrefetchCount(100);
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
+        factory.setErrorHandler(rabbitErrorHandler);
         return factory;
     }
 

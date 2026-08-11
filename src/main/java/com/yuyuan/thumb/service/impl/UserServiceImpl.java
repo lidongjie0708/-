@@ -20,6 +20,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
 
@@ -44,6 +45,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
     @Autowired
     private JwtUtil jwtUtil;
 
+    /** Small Caffeine cache so getLoginUser stops hitting MySQL on every request. */
+    private final com.github.benmanes.caffeine.cache.Cache<String, User> userCache =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
+                    .maximumSize(10_000)
+                    .expireAfterWrite(Duration.ofMinutes(5))
+                    .build();
+
     @Override
     public User getLoginUser(HttpServletRequest request) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
@@ -51,9 +59,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
                 || "anonymousUser".equals(authentication.getPrincipal())) {
             return null;
         }
-        return userMapper.selectOne(
-                new QueryWrapper<User>().eq("username", authentication.getName())
-        );
+        String username = authentication.getName();
+        return userCache.get(username, name ->
+                userMapper.selectOne(new QueryWrapper<User>().eq("username", name)));
     }
 
     @Override
@@ -144,6 +152,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User>
         current.setFullName(profile.getFullName() == null ? null : profile.getFullName().trim());
         current.setUpdatedAt(new Date());
         userMapper.updateById(current);
+        userCache.invalidate(username);
         current.setPassword(null);
         return current;
     }

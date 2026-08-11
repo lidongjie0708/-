@@ -25,8 +25,25 @@ public interface BlogService extends IService<Blog> {
     List<BlogVO> getBlogVOList(List<Blog> blogList, HttpServletRequest request);
     
     List<Blog> getByUsername(String username);
+
+    /**
+     * Fills thumbCount with the exact real-time value (MySQL base + pending Redis delta),
+     * so the displayed count is fresh even before the next flush batch.
+     */
+    void fillRealTimeThumbCount(Blog blog);
+
+    void fillRealTimeThumbCounts(List<Blog> blogs);
     
     boolean isAuthor(Long id, String username);
 
     boolean updateByIdWithoutAgent(Blog blog);
+
+    /**
+     * 只更新 Agent 负责的字段（summary/tags/embedding_status），
+     * 避免整行回写覆盖并发修改的其他字段（如 thumbCount）。
+     *
+     * @param summary 摘要，null 表示不更新
+     * @param tags    标签（逗号分隔），null 表示不更新
+     */
+    void updateAgentFields(Long blogId, String summary, String tags, Integer embeddingStatus);
 }

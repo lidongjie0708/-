@@ -15,4 +15,14 @@
         id,user_id,blog_id,
         create_time
     </sql>
+
+    <insert id="insertIgnore">
+        INSERT IGNORE INTO thumb (id, user_id, blog_id)
+        VALUES (#{thumb.id}, #{thumb.userId}, #{thumb.blogId})
+    </insert>
+
+    <delete id="deleteByUserAndBlog">
+        DELETE FROM thumb
+        WHERE user_id = #{userId} AND blog_id = #{blogId}
+    </delete>
 </mapper>

@@ -1,112 +1,85 @@
 package com.yuyuan.thumb.listener.thumb;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.rabbitmq.client.Channel;
 import com.yuyuan.thumb.config.RabbitMQConfig;
 import com.yuyuan.thumb.listener.thumb.msg.ThumbEvent;
-import com.yuyuan.thumb.manager.cache.CacheManager;
-import com.yuyuan.thumb.mapper.BlogMapper;
-import com.yuyuan.thumb.model.entity.Thumb;
-import com.yuyuan.thumb.service.ThumbService;
+import com.yuyuan.thumb.mapper.ThumbMapper;
+import com.yuyuan.thumb.metrics.ThumbMetrics;
 import com.yuyuan.thumb.util.RedisKeyUtil;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.io.IOException;
-import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
+import java.time.Duration;
+import java.time.LocalDateTime;
 
-/**
- * RabbitMQ点赞消费者
- */
+/** Projects Redis's current thumb state into MySQL. Events are triggers, not +/- commands. */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class RabbitThumbConsumer {
 
-    private final BlogMapper blogMapper;
-    private final ThumbService thumbService;
-    private final CacheManager cacheManager;
+    private final ThumbMapper thumbMapper;
     private final RedisTemplate<String, Object> redisTemplate;
+    private final TransactionTemplate transactionTemplate;
+    private final ThumbEventDecoder thumbEventDecoder;
+    private final ThumbMetrics thumbMetrics;
 
-    public RabbitThumbConsumer(BlogMapper blogMapper, 
-                           @Qualifier("thumbServiceRabbitMQ") ThumbService thumbService,
-                           CacheManager cacheManager,
-                           RedisTemplate<String, Object> redisTemplate) {
-        this.blogMapper = blogMapper;
-        this.thumbService = thumbService;
-        this.cacheManager = cacheManager;
-        this.redisTemplate = redisTemplate;
-    }
-
-    /**
-     * 处理死信队列消息
-     */
     @RabbitListener(queues = RabbitMQConfig.THUMB_DLQ_QUEUE)
-    public void consumeDlq(ThumbEvent event, Message message, Channel channel) throws IOException {
-        log.info("DLQ message received: userId={}, blogId={}", event.getUserId(), event.getBlogId());
-        log.info("消息已入库，已通知相关人员处理");
+    public void consumeDlq(Message message, Channel channel) throws IOException {
+        try {
+            thumbMetrics.recordDlqIngress();
+            ThumbEvent event = thumbEventDecoder.decode(message);
+            log.error("Thumb event moved to DLQ: eventId={}, userId={}, blogId={}, xDeath={}",
+                    event.getEventId(), event.getUserId(), event.getBlogId(),
+                    message.getMessageProperties().getXDeathHeader());
+        } catch (IllegalArgumentException exception) {
+            // Acknowledge poison/legacy messages after recording metadata: the DLQ is terminal and must not loop.
+            log.error("Unreadable thumb DLQ message acknowledged safely: deliveryTag={}, contentType={}, bodyBytes={}, xDeath={}",
+                    message.getMessageProperties().getDeliveryTag(), message.getMessageProperties().getContentType(),
+                    message.getBody().length, message.getMessageProperties().getXDeathHeader(), exception);
+        }
         channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
     }
 
-    /**
-     * 批量处理点赞消息
-     */
     @RabbitListener(queues = RabbitMQConfig.THUMB_QUEUE, containerFactory = "rabbitListenerContainerFactory")
-    @Transactional(rollbackFor = Exception.class)
-    public void processThumbEvent(ThumbEvent event, Message message, Channel channel) throws IOException {
+    public void processThumbEvent(Message message, Channel channel) throws IOException {
         try {
-            log.info("Processing thumb event: userId={}, blogId={}, type={}", 
-                    event.getUserId(), event.getBlogId(), event.getType());
-            
-            Map<Long, Long> countMap = new ConcurrentHashMap<>();
-            List<Thumb> thumbs = new ArrayList<>();
-            LambdaQueryWrapper<Thumb> wrapper = new LambdaQueryWrapper<>();
-            boolean needRemove = false;
-
-            if (event.getType() == ThumbEvent.EventType.INCR) {
-                countMap.put(event.getBlogId(), 1L);
-                Thumb thumb = new Thumb();
-                thumb.setBlogId(event.getBlogId());
-                thumb.setUserId(event.getUserId());
-                thumbs.add(thumb);
-            } else {
-                needRemove = true;
-                wrapper.eq(Thumb::getUserId, event.getUserId())
-                       .eq(Thumb::getBlogId, event.getBlogId());
-                countMap.put(event.getBlogId(), -1L);
+            ThumbEvent event = thumbEventDecoder.decode(message);
+            // executeWithoutResult returns only after the MySQL transaction commits.
+            transactionTemplate.executeWithoutResult(status -> syncCurrentRedisState(event));
+            if (event.getEventTime() != null) {
+                thumbMetrics.recordProjectionLatency(Duration.between(event.getEventTime(), LocalDateTime.now()));
             }
-
-            // 批量更新数据库
-            if (needRemove) {
-                thumbService.remove(wrapper);
-            }
-            batchUpdateBlogs(countMap);
-            batchInsertThumbs(thumbs);
-
-            // 手动确认消息
+            // In MANUAL mode this is the only point at which RabbitMQ deletes the delivery.
             channel.basicAck(message.getMessageProperties().getDeliveryTag(), false);
-            
-        } catch (Exception e) {
-            log.error("处理点赞消息失败", e);
-            // 拒绝消息，进入死信队列
+        } catch (Exception exception) {
+            log.error("Failed to project thumb event into MySQL; sending to DLQ. deliveryTag={}, bodyBytes={}",
+                    message.getMessageProperties().getDeliveryTag(), message.getBody().length, exception);
+            thumbMetrics.recordConsumerNack();
             channel.basicNack(message.getMessageProperties().getDeliveryTag(), false, false);
         }
     }
 
-    public void batchUpdateBlogs(Map<Long, Long> countMap) {
-        if (!countMap.isEmpty()) {
-            blogMapper.batchUpdateThumbCount(countMap);
-        }
-    }
-
-    public void batchInsertThumbs(List<Thumb> thumbs) {
-        if (!thumbs.isEmpty()) {
-            thumbService.saveBatch(thumbs, 500);
+    private void syncCurrentRedisState(ThumbEvent event) {
+        boolean redisLiked = Boolean.TRUE.equals(redisTemplate.opsForHash().hasKey(
+                RedisKeyUtil.getUserThumbKey(event.getUserId()), event.getBlogId().toString()));
+        if (redisLiked) {
+            com.yuyuan.thumb.model.entity.Thumb thumb = new com.yuyuan.thumb.model.entity.Thumb();
+            thumb.setId(IdWorker.getId());
+            thumb.setUserId(event.getUserId());
+            thumb.setBlogId(event.getBlogId());
+            boolean inserted = thumbMapper.insertIgnore(thumb) == 1;
+            thumbMetrics.recordProjectionDelta("insert", inserted);
+        } else {
+            boolean deleted = thumbMapper.deleteByUserAndBlog(event.getUserId(), event.getBlogId()) == 1;
+            thumbMetrics.recordProjectionDelta("delete", deleted);
         }
     }
 }

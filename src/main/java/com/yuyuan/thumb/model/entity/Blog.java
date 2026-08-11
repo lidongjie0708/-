@@ -1,6 +1,7 @@
 package com.yuyuan.thumb.model.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -117,7 +118,7 @@ public class Blog {
     /**
      * 点赞数
      */
-    @TableField("thumbCount")
+    @TableField(value = "thumbCount", updateStrategy = FieldStrategy.NEVER)
     private Integer thumbCount;
 
     /**

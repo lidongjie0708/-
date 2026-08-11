@@ -36,4 +36,19 @@
             #{id}
         </foreach>
     </update>
+    <update id="refreshThumbCount">
+        UPDATE blog
+        SET thumbCount = (SELECT COUNT(*) FROM thumb WHERE blog_id = #{blogId})
+        WHERE id = #{blogId}
+    </update>
+    <update id="refreshAllThumbCount">
+        UPDATE blog b
+        SET thumbCount = (SELECT COUNT(*) FROM thumb t WHERE t.blog_id = b.id)
+    </update>
+    <update id="incrementThumbCount">
+        UPDATE blog SET thumbCount = thumbCount + 1 WHERE id = #{blogId}
+    </update>
+    <update id="decrementThumbCount">
+        UPDATE blog SET thumbCount = GREATEST(thumbCount - 1, 0) WHERE id = #{blogId}
+    </update>
 </mapper>

@@ -12,14 +12,13 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ThumbEvent {
+    /** Globally unique event identifier used for consumer-side idempotency. */
+    private String eventId;
     private Long userId;
     private Long blogId;
-    // INCR/DECR
-    private EventType type;
+    /** The desired final state, rather than a non-idempotent increment/decrement. */
+    private Boolean desiredLiked;
+    /** Monotonically increasing version for one user/blog state machine. */
+    private Long version;
     private LocalDateTime eventTime;
-
-    public enum EventType {
-        INCR,
-        DECR
-    }
 }

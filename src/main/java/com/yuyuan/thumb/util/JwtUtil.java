@@ -1,5 +1,7 @@
 package com.yuyuan.thumb.util;
 
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtParser;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import jakarta.servlet.http.HttpServletRequest;
@@ -26,6 +28,9 @@ public class JwtUtil {
 
     private final long expiration;
 
+    /** JwtParser is thread-safe after build; reuse it to avoid per-request ServiceLoader scans. */
+    private final JwtParser parser;
+
     /**
      * 从 Spring 配置（底层是环境变量 $JWT_SECRET）读取密钥，
      * 保证每次启动解密签名用的是同一个密钥，Token 重启不失效。
@@ -36,14 +41,19 @@ public class JwtUtil {
         byte[] keyBytes = Base64.getDecoder().decode(secretBase64);
         this.secretKey = Keys.hmacShaKeyFor(keyBytes);
         this.expiration = expiration;
+        this.parser = Jwts.parserBuilder()
+                .setSigningKey(secretKey)
+                .build();
     }
 
     /**
      * 生成token
      */
-    public String generateToken(String username) {
+    public String generateToken(String username, Long userId, String role) {
         return Jwts.builder()
                 .setSubject(username)
+                .claim("userId", userId)
+                .claim("role", role)
                 .setIssuedAt(new Date())
                 .setExpiration(new Date(System.currentTimeMillis() + expiration))
                 .signWith(secretKey)
@@ -72,12 +82,14 @@ public class JwtUtil {
      * 从token中获取用户名
      */
     public String getUsernameFromToken(String token) {
-        return Jwts.parserBuilder()
-                .setSigningKey(secretKey)
-                .build()
-                .parseClaimsJws(token)
-                .getBody()
-                .getSubject();
+        return parseToken(token).getSubject();
+    }
+
+    /**
+     * Parse and return the full claims set; prefer a single parse per request.
+     */
+    public Claims parseToken(String token) {
+        return parser.parseClaimsJws(token).getBody();
     }
 
     /**
@@ -85,10 +97,7 @@ public class JwtUtil {
      */
     public boolean validateToken(String token) {
         try {
-            Jwts.parserBuilder()
-                    .setSigningKey(secretKey)
-                    .build()
-                    .parseClaimsJws(token);
+            parser.parseClaimsJws(token);
             return true;
         } catch (Exception e) {
             return false;
@@ -110,11 +119,6 @@ public class JwtUtil {
      * 获取token过期时间
      */
     public Date getExpirationDateFromToken(String token) {
-        return Jwts.parserBuilder()
-                .setSigningKey(secretKey)
-                .build()
-                .parseClaimsJws(token)
-                .getBody()
-                .getExpiration();
+        return parser.parseClaimsJws(token).getBody().getExpiration();
     }
 }

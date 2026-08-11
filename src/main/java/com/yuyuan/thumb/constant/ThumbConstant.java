@@ -17,4 +17,10 @@ public interface ThumbConstant {
      */
     String TEMP_THUMB_KEY_PREFIX = "thumb:temp:%s";
 
+    String BLOG_DELTA_KEY = "thumb:blog:delta";
+
+    String BLOG_DELTA_FLUSHING_KEY = "thumb:blog:delta:flushing";
+
+    String BLOG_DELTA_FLUSHING_BATCH_KEY = "thumb:blog:delta:flushing:batch";
+
 }

@@ -15,10 +15,15 @@ import java.util.Map;
 @Mapper
 public interface BlogMapper extends BaseMapper<Blog> {
     void batchUpdateThumbCount(@Param("countMap") Map<Long, Long> countMap);
+
+    void refreshThumbCount(@Param("blogId") Long blogId);
+
+    void refreshAllThumbCount();
+
+    int incrementThumbCount(@Param("blogId") Long blogId);
+
+    int decrementThumbCount(@Param("blogId") Long blogId);
     
     @Select("SELECT * FROM blog WHERE userId = #{userId}")
     List<Blog> selectByAuthorId(Long userId);
 }
-
-
-

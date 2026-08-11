@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: blogslike-java
+    metrics_path: /api/actuator/prometheus
+    static_configs:
+      # Docker Desktop exposes host services through this fixed hostname.
+      - targets: [host.docker.internal:9199]
