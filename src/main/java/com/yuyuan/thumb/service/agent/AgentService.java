@@ -61,32 +61,28 @@ public class AgentService {
 
     private void doProcessBlog(Blog blog) {
         try {
-            // 1. 标记为处理中
-            blog.setEmbeddingStatus(EmbeddingStatusEnum.PROCESSING.getCode());
-            blogService.updateByIdWithoutAgent(blog);
+            // 1. 标记为处理中（只更新状态字段，不整行回写）
+            blogService.updateAgentFields(blog.getId(), null, null, EmbeddingStatusEnum.PROCESSING.getCode());
 
             AgentResponse response = callBlogProcessAgent(blog);
             String summary = response.getSummary();
             List<String> tags = response.getTags();
             Boolean embedSuccess = response.getEmbedSuccess();
 
-            // 5. 回写结果
-            blog.setSummary(summary);
-            if (tags != null && !tags.isEmpty()) {
-                blog.setTags(String.join(",", tags));
-            }
-            blog.setEmbeddingStatus(Boolean.TRUE.equals(embedSuccess)
-                    ? EmbeddingStatusEnum.COMPLETED.getCode()
-                    : EmbeddingStatusEnum.FAILED.getCode());
-            blogService.updateByIdWithoutAgent(blog);
+            // 2. 只回写 Agent 负责的字段：summary / tags / embedding_status
+            blogService.updateAgentFields(blog.getId(),
+                    summary,
+                    tags != null && !tags.isEmpty() ? String.join(",", tags) : null,
+                    Boolean.TRUE.equals(embedSuccess)
+                            ? EmbeddingStatusEnum.COMPLETED.getCode()
+                            : EmbeddingStatusEnum.FAILED.getCode());
 
             log.info("博客 Agent 处理完成: blogId={}, summaryLen={}, tags={}, embedSuccess={}",
                     blog.getId(), summary != null ? summary.length() : 0, tags, embedSuccess);
 
         } catch (Exception e) {
             log.error("博客 Agent 处理异常: blogId={}", blog.getId(), e);
-            blog.setEmbeddingStatus(EmbeddingStatusEnum.FAILED.getCode());
-            blogService.updateByIdWithoutAgent(blog);
+            blogService.updateAgentFields(blog.getId(), null, null, EmbeddingStatusEnum.FAILED.getCode());
         }
     }
 

@@ -213,4 +213,55 @@ export const agentApi = {
   analytics(payload) {
     return pythonAgentRequest.post('/analytics/query', payload)
   },
+
+  async streamAnalytics(payload, onEvent) {
+    const response = await fetch('/py-agent/analytics/query/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${localStorage.getItem('aiToken') || ''}`,
+      },
+      body: JSON.stringify(payload),
+    })
+    if (!response.ok || !response.body) {
+      const body = await response.json().catch(() => ({}))
+      throw new Error(
+        body.detail || body.message || `运营助手请求失败（${response.status}）`
+      )
+    }
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { value, done } = await reader.read()
+      buffer += decoder
+        .decode(value || new Uint8Array(), { stream: !done })
+        .replace(/\r\n/g, '\n')
+      const blocks = buffer.split('\n\n')
+      buffer = blocks.pop() || ''
+      for (const block of blocks) {
+        const event = block.match(/^event:\s*(.+)$/m)?.[1] || 'message'
+        const raw = block.match(/^data:\s*(.+)$/m)?.[1]
+        if (!raw) continue
+        onEvent(event, JSON.parse(raw))
+      }
+      if (done) break
+    }
+  },
+
+  analyticsLogsPage(params) {
+    return pythonAgentRequest.get('/analytics/logs/page', { params })
+  },
+
+  operationsAnalyze(payload) {
+    return pythonAgentRequest.post('/operations/analyze', payload)
+  },
+
+  dailyReports(params) {
+    return pythonAgentRequest.get('/operations/daily-reports', { params })
+  },
+
+  dailyReportDetail(reportDate) {
+    return pythonAgentRequest.get(`/operations/daily-reports/${reportDate}`)
+  },
 }

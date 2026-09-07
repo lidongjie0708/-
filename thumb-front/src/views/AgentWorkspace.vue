@@ -137,6 +137,7 @@ async function runAgent() {
             question: analyticsQuestion.value,
             userId,
             role,
+            sessionId: sessionId.value || undefined,
           });
 
     result.value = response.data;

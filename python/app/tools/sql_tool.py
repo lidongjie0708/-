@@ -24,24 +24,25 @@ ALLOWED_SCHEMA = {
         "thumbCount",
         "summary",
         "tags",
-        "embeddingStatus",
-        "auditStatus",
+        "embedding_status",
+        "audit_status",
         "createTime",
         "updateTime",
+        "content_format",
     },
     "comments": {
         "id",
-        "blogId",
-        "userId",
+        "blog_id",
+        "user_id",
         "content",
-        "parentId",
-        "createdAt",
-        "updatedAt",
-        "sentimentScore",
-        "isFlagged",
-        "isDeleted",
+        "parent_id",
+        "created_at",
+        "updated_at",
+        "sentiment_score",
+        "is_flagged",
+        "is_deleted",
     },
-    "thumb": {"id", "userId", "blogId", "createTime"},
+    "thumb": {"id", "user_id", "blog_id", "create_time"},
 }
 BLOCKED_WORDS = {
     "insert",
@@ -124,6 +125,31 @@ def execute_readonly_sql(sql: str) -> list[dict[str, Any]]:
     return mysql.query(sql)
 
 
+def safe_readonly_sql_query(sql: str) -> dict[str, Any]:
+    """Atomically validate and execute one read-only analytics query."""
+    safety = sql_safety_check_tool(sql)
+    if not safety.get("safe"):
+        return {"ok": False, "kind": "safety_rejected", "sql": sql, "safety": safety}
+    try:
+        data = execute_readonly_sql(sql)
+        return {
+            "ok": True,
+            "kind": "query_result",
+            "sql": sql,
+            "rowCount": len(data),
+            "data": data,
+            "safety": safety,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "kind": "query_error",
+            "sql": sql,
+            "error": str(exc),
+            "safety": safety,
+        }
+
+
 try:
     from langchain_core.tools import tool
 except Exception:
@@ -142,13 +168,24 @@ if tool:
         """Execute a validated SELECT query against the BlogsLike analytics schema."""
         return execute_readonly_sql(sql)
 
+    @tool("safe_readonly_sql_query")
+    def safe_readonly_sql_query_langchain_tool(sql: str) -> dict[str, Any]:
+        """Safely validate then execute one read-only analytics SQL query."""
+        return safe_readonly_sql_query(sql)
+
 else:
     sql_safety_check_langchain_tool = None
     readonly_sql_query_tool = None
+    safe_readonly_sql_query_langchain_tool = None
 
 
 def get_admin_analytics_tools() -> list[Any]:
     return [item for item in [sql_safety_check_langchain_tool, readonly_sql_query_tool] if item is not None]
+
+
+def get_safe_analytics_tools() -> list[Any]:
+    """The only tool exposed to the autonomous analytics graph."""
+    return [item for item in [safe_readonly_sql_query_langchain_tool] if item is not None]
 
 
 def _validate_limit(lowered_sql: str) -> tuple[bool, str]:
@@ -169,7 +206,11 @@ def _validate_sensitive_fields(lowered_sql: str) -> tuple[bool, str]:
 
 def _validate_ast(sql: str, tables: set[str]) -> tuple[bool, str, dict[str, Any]]:
     meta = {"parser": "sqlparse-lite", "tables": sorted(tables)}
-    if "*" in re.sub(r"count\s*\(\s*\*\s*\)", "count()", sql.lower()):
+    # Fast-path guard for a literal `SELECT *` or `, *`.  COUNT(*) arithmetic
+    # (e.g. `COUNT(*) * 100.0`) is normalized first; complex star usage is
+    # decided precisely by the AST check below, which exempts COUNT(*).
+    cleaned = re.sub(r"count\s*\(\s*\*\s*\)", "count()", sql.lower())
+    if re.search(r"(?:\bselect|,)\s*\*", cleaned):
         return False, "SELECT * is not allowed", meta
     join_count = len(re.findall(r"\bjoin\b", sql.lower()))
     group_by_match = re.search(r"\bgroup\s+by\s+(.+?)(\border\s+by\b|\blimit\b|$)", sql.lower(), re.S)
@@ -202,8 +243,17 @@ def _validate_ast(sql: str, tables: set[str]) -> tuple[bool, str, dict[str, Any]
     if any(_is_disallowed_star(item, exp) for item in expression.find_all(exp.Star)):
         return False, "SELECT * is not allowed", meta
     columns = {column.name for column in expression.find_all(exp.Column)}
+    alias_names = {
+        str(getattr(alias_node.args.get("alias"), "name", alias_node.args.get("alias")) or "").lower()
+        for alias_node in expression.find_all(exp.Alias)
+        if alias_node.args.get("alias") is not None
+    }
     allowed_columns = {column.lower() for column in set().union(*ALLOWED_SCHEMA.values())}
-    disallowed_columns = {column for column in columns if column and column.lower() not in allowed_columns}
+    disallowed_columns = {
+        column
+        for column in columns
+        if column and column.lower() not in allowed_columns and column.lower() not in alias_names
+    }
     if disallowed_columns:
         return False, f"Field not allowed: {', '.join(sorted(disallowed_columns))}", meta
     join_count = len(list(expression.find_all(exp.Join)))

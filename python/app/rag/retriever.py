@@ -5,7 +5,7 @@ from typing import Any
 from app.config import settings
 from app.rag.bm25 import bm25_search
 from app.rag.fusion import reciprocal_rank_fusion
-from app.rag.query_rewriter import rewrite_query
+from app.rag.query_rewriter import is_complex_question, normalize_retrieval_queries, rewrite_query
 from app.rag.reranker import rerank
 from app.rag.store import get_blog_vector_store
 from app.rag.trace import add_trace_stage, summarize_docs
@@ -58,25 +58,44 @@ def retrieve_blog_context(
             "reason": rewrite_reason,
         },
     )
-    retrieval_query = " ".join(
-        part
-        for part in [
-            rewritten.get("rewritten", question),
-            " ".join(rewritten.get("keywords", [])),
-        ]
-        if part
-    )
+    retrieval_queries = normalize_retrieval_queries(rewritten, question)
+    if not is_complex_question(question):
+        retrieval_queries = retrieval_queries[:1]
     vector_store = get_blog_vector_store()
-    vector_results = vector_store.vector_search(retrieval_query, settings.rag_vector_top_k, filters)
-    add_trace_stage(trace, "vector_search", {"query": retrieval_query, "count": len(vector_results), "sample": summarize_docs(vector_results)})
     bm25_candidates = vector_store.scroll_documents(filters, limit=1000)
-    bm25_results = bm25_search(retrieval_query, bm25_candidates, settings.rag_bm25_top_k)
-    add_trace_stage(trace, "bm25_search", {"candidateCount": len(bm25_candidates), "count": len(bm25_results), "sample": summarize_docs(bm25_results)})
-    fused = reciprocal_rank_fusion([vector_results, bm25_results], settings.rag_rrf_k)
-    add_trace_stage(trace, "rrf_fusion", {"count": len(fused), "sample": summarize_docs(fused)})
-    preliminary = rerank(question, fused, top_k or settings.rag_rerank_top_k, use_remote=False)
+    result_sets: list[list[dict[str, Any]]] = []
+    retrieval_trace: list[dict[str, Any]] = []
+    for retrieval_query in retrieval_queries:
+        vector_results = vector_store.vector_search(retrieval_query, settings.rag_vector_top_k, filters)
+        bm25_results = bm25_search(retrieval_query, bm25_candidates, settings.rag_bm25_top_k)
+        result_sets.extend((vector_results, bm25_results))
+        retrieval_trace.append(
+            {
+                "query": retrieval_query,
+                "vectorCount": len(vector_results),
+                "bm25Count": len(bm25_results),
+                "vectorSample": summarize_docs(vector_results),
+                "bm25Sample": summarize_docs(bm25_results),
+            }
+        )
+    add_trace_stage(trace, "query_plan", {"queries": retrieval_queries, "complex": is_complex_question(question)})
+    add_trace_stage(trace, "retrieval", {"candidateCount": len(bm25_candidates), "queries": retrieval_trace})
+    fused_all = reciprocal_rank_fusion(result_sets, settings.rag_rrf_k)
+    fused = fused_all[: settings.rag_rrf_candidate_top_k]
+    add_trace_stage(
+        trace,
+        "rrf_fusion",
+        {
+            "inputCount": len(fused_all),
+            "candidateTopK": settings.rag_rrf_candidate_top_k,
+            "count": len(fused),
+            "sample": summarize_docs(fused),
+        },
+    )
+    rerank_query = "\n".join(retrieval_queries)
+    preliminary = rerank(rerank_query, fused, top_k or settings.rag_rerank_top_k, use_remote=False)
     use_remote_rerank, rerank_reason = _should_remote_rerank(preliminary)
-    reranked = rerank(question, fused, top_k or settings.rag_rerank_top_k, use_remote=use_remote_rerank)
+    reranked = rerank(rerank_query, fused, top_k or settings.rag_rerank_top_k, use_remote=use_remote_rerank)
     add_trace_stage(
         trace,
         "rerank",
@@ -90,12 +109,38 @@ def retrieve_blog_context(
     )
     for item in reranked:
         item["queryRewrite"] = rewritten
-    filtered = [
-        item
-        for item in reranked
-        if item.get("rerankScore", item["score"]) >= settings.rag_min_score
-    ]
-    add_trace_stage(trace, "score_filter", {"minScore": settings.rag_min_score, "count": len(filtered), "sample": summarize_docs(filtered)})
+    if use_remote_rerank and reranked:
+        top_rerank_score = max(float(item.get("rerankScore") or 0.0) for item in reranked)
+        threshold = max(settings.rag_remote_min_score, settings.rag_remote_score_ratio * top_rerank_score)
+        filtered = [
+            item
+            for item in reranked
+            if float(item.get("rerankScore") or 0.0) >= threshold
+        ]
+        filter_mode = "remote-relative"
+    else:
+        top_rerank_score = None
+        threshold = settings.rag_min_score
+        filtered = [
+            item
+            for item in reranked
+            if float(item.get("rerankScore", item.get("score") or 0.0)) >= threshold
+        ]
+        filter_mode = "local-absolute"
+    add_trace_stage(
+        trace,
+        "score_filter",
+        {
+            "mode": filter_mode,
+            "minScore": settings.rag_min_score,
+            "remoteMinScore": settings.rag_remote_min_score,
+            "remoteScoreRatio": settings.rag_remote_score_ratio,
+            "threshold": threshold,
+            "topRerankScore": top_rerank_score,
+            "count": len(filtered),
+            "sample": summarize_docs(filtered),
+        },
+    )
     return filtered
 
 
@@ -104,6 +149,7 @@ def _identity_rewrite(question: str, memory_context: dict | None = None) -> dict
         "original": question,
         "rewritten": question.strip(),
         "keywords": [part for part in question.replace("?", " ").replace("？", " ").split() if part][:8],
+        "retrievalQueries": [question.strip()],
         "usedMemory": bool(memory_context and memory_context.get("turnCount")),
         "skipped": True,
     }
@@ -115,6 +161,8 @@ def _should_rewrite_query(question: str, memory_context: dict | None) -> tuple[b
         return True, "mode:always"
     if mode == "never":
         return False, "mode:never"
+    if is_complex_question(question):
+        return True, "auto:multi-facet-question"
     normalized = question.strip().lower()
     has_memory = bool(memory_context and memory_context.get("turnCount"))
     follow_up_markers = {

@@ -115,6 +115,26 @@ ANALYTICS_MAX_GROUP_BY_FIELDS=3
 ANALYTICS_MAX_SQL_COUNT=3
 ```
 
+## Conversation memory
+
+The RAG conversation memory uses three tiers: Redis keeps the recent sliding window,
+MySQL stores every raw turn, and an asynchronous worker writes a structured long-term
+summary to MySQL. Apply `sql/migration/V2.9.0__async_structured_rag_memory_summary.sql`
+before enabling the worker in an existing database.
+
+```text
+RAG_MEMORY_TURNS=6
+RAG_MEMORY_SUMMARY_EVERY_TURNS=6
+RAG_MEMORY_SUMMARY_ASYNC_ENABLED=true
+RAG_MEMORY_SUMMARY_WORKER_POLL_SECONDS=5
+```
+
+Raw turns are written before the response completes. Every configured number of turns,
+the service persists a summary task; the worker runs after startup and can resume pending
+tasks after a restart. The summary stores structured goal, confirmed facts, preferences,
+open questions, and entities. If the LLM is unavailable, a deterministic degraded summary
+is stored instead of losing the raw conversation history.
+
 ## Agent Engineering Optimizations
 
 RAG Agent:

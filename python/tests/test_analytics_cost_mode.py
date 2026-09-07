@@ -35,7 +35,8 @@ class AnalyticsCostModeTests(unittest.TestCase):
             "template",
         )
 
-        self.assertIn("Analytics completed", report["summary"])
+        self.assertIn("点赞最高", report["summary"])
+        self.assertIn("Redis notes", report["summary"])
         self.assertEqual("write_followup", report["suggestions"][0]["action"])
 
 

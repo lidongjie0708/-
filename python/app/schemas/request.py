@@ -60,6 +60,24 @@ class AnalyticsRequest(BaseModel):
     question: str
     userId: int | None = None
     role: str = "ADMIN"
+    forcedIntent: str | None = None
+    sessionId: str | None = Field(default=None, max_length=128)
+
+
+class OperationsAnalyzeRequest(BaseModel):
+    currentDays: int = Field(default=7, ge=1, le=30)
+    baselineDays: int = Field(default=56, ge=2, le=90)
+    tag: str | None = Field(default=None, max_length=64, pattern=r"^[\w\-\u4e00-\u9fff]+$")
+
+
+class ActionProposalRequest(BaseModel):
+    type: Literal["TODO", "SEO_DRAFT"]
+    targetType: str = Field(min_length=1, max_length=64)
+    targetId: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=1, max_length=2000)
+    proposedPayload: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    idempotencyKey: str = Field(min_length=8, max_length=128)
 
 
 class ChatRequest(BaseModel):

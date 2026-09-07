@@ -1,5 +1,6 @@
 import http from 'k6/http';
-import { AGENT_BASE, getAgentToken, jsonHeaders, ok, registerAndLogin, shortThink } from './common.js';
+import { check } from 'k6';
+import { AGENT_BASE, getAgentToken, jsonHeaders, registerAndLogin, shortThink } from './common.js';
 
 export const options = {
   scenarios: {
@@ -27,7 +28,7 @@ export default function (data) {
   const questions = [
     'Redis 缓存是怎么工作的？',
     '点赞系统如何避免重复点赞？',
-    '博客系统有哪些核心功能？',
+    '这个博客平台都提供哪些主要功能？',
   ];
   const res = http.post(
     `${AGENT_BASE}/api/agent/rag/ask`,
@@ -40,6 +41,22 @@ export default function (data) {
     }),
     jsonHeaders(data.token),
   );
-  ok(res, 'rag ask');
+  let body = {};
+  try {
+    body = res.json();
+  } catch (_) {
+    body = {};
+  }
+  const dataBody = (body && body.data) || {};
+  const answer = String(dataBody.answer || '');
+  check(res, {
+    'rag ask: http 2xx': (r) => r.status >= 200 && r.status < 300,
+    'rag ask: app code 0': () => body.code === 0 || body.success === true,
+    'rag ask: cited': () => Array.isArray(dataBody.citations) && dataBody.citations.length > 0,
+    'rag ask: real answer': () =>
+      answer.length > 20 &&
+      !answer.startsWith('Conversation memory') &&
+      !answer.startsWith('No sufficiently relevant content'),
+  });
   shortThink();
 }

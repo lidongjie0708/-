@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
-from app.agents.analytics_agent import analyze_operation
+from app.agents.analytics_agent import analyze_operation, stream_analyze_operation
+from app.agents.operations_agent import analyze_operations
 from app.agents.chat_orchestrator import route_chat, run_unified_chat
 from app.agents.audit_agent import audit_comment, audit_content
 from app.agents.rag_qa_agent import ask_blog_knowledge, stream_blog_knowledge
@@ -16,11 +18,16 @@ from app.infra.task_store import task_store
 from app.infra.llm import llm_client
 from app.rag.memory import build_memory_context, conversation_memory
 from app.infra.auth import AgentPrincipal, verify_agent_token
+from app.infra import mysql
+from app.ops_actions import action_preview_service
+from app.ops_actions.service import ActionError
 from app.rag.document_sync import sync_blog_incremental
 from app.rag.evaluation_runner import run_rag_evaluation
 from app.schemas.request import (
     AgentRequest,
     AnalyticsRequest,
+    OperationsAnalyzeRequest,
+    ActionProposalRequest,
     ChatRequest,
     ArticleWorkflowRequest,
     AuditRequest,
@@ -310,8 +317,151 @@ def audit(request: AuditRequest) -> ApiResponse:
 @router.post("/analytics/query", response_model=ApiResponse)
 def analytics_query(request: AnalyticsRequest, principal: AgentPrincipal = Depends(verify_agent_token)) -> ApiResponse:
     user_id = request.userId if principal.role.upper() == "ADMIN" and request.userId is not None else principal.user_id
-    data = analyze_operation(request.question, principal.role, user_id)
+    data = analyze_operation(
+        request.question,
+        principal.role,
+        user_id,
+        forced_intent=request.forcedIntent,
+        session_id=request.sessionId,
+    )
     return ApiResponse(data=data)
+
+
+@router.post("/analytics/query/stream")
+def analytics_query_stream(
+    request: AnalyticsRequest,
+    principal: AgentPrincipal = Depends(verify_agent_token),
+) -> StreamingResponse:
+    user_id = request.userId if principal.role.upper() == "ADMIN" and request.userId is not None else principal.user_id
+
+    def events():
+        yield _chat_sse("status", {"stage": "thinking", "message": "正在理解你的运营问题…"})
+        for kind, payload in stream_analyze_operation(
+            request.question,
+            principal.role,
+            user_id,
+            forced_intent=request.forcedIntent,
+            session_id=request.sessionId,
+        ):
+            if kind in {"status", "plan", "sql"}:
+                yield _chat_sse(kind, payload)
+            elif kind == "result":
+                data = payload
+                if data.get("memory"):
+                    yield _chat_sse("memory", data["memory"])
+                if data.get("status") == "NEEDS_CLARIFICATION":
+                    yield _chat_sse("clarification", data)
+                    yield _chat_sse("done", data)
+                    return
+                yield _chat_sse("result", data)
+                yield _chat_sse("done", data)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/analytics/logs/page", response_model=ApiResponse)
+def page_analytics_logs(
+    page: int = 1,
+    size: int = 20,
+    principal: AgentPrincipal = Depends(verify_agent_token),
+) -> ApiResponse:
+    if principal.role.upper() != "ADMIN":
+        return ApiResponse(code=403, message="Only admin can view analytics logs", error="NO_PERMISSION")
+    page = max(int(page), 1)
+    size = min(max(int(size), 1), 100)
+    rows = mysql.query(
+        "SELECT id, question, intent, status, row_count, sql_text, insight, error_message, created_at "
+        "FROM agent_analysis_log ORDER BY id DESC LIMIT %s OFFSET %s",
+        (size, (page - 1) * size),
+    )
+    total = mysql.query("SELECT COUNT(*) AS total FROM agent_analysis_log")[0]["total"]
+    return ApiResponse(data={"list": rows, "total": total, "page": page, "size": size})
+
+
+@router.post("/operations/analyze", response_model=ApiResponse)
+def operations_analyze(
+    request: OperationsAnalyzeRequest, principal: AgentPrincipal = Depends(verify_agent_token)
+) -> ApiResponse:
+    if principal.role.upper() != "ADMIN":
+        return ApiResponse(code=403, message="Only admin can run operations analysis", error="NO_PERMISSION")
+    try:
+        data = analyze_operations(current_days=request.currentDays, baseline_days=request.baselineDays, tag=request.tag)
+        return ApiResponse(data=data)
+    except ValueError as exc:
+        return ApiResponse(code=400, message="invalid analysis request", error=str(exc))
+
+
+def _action_error_response(exc: Exception) -> ApiResponse:
+    if isinstance(exc, PermissionError):
+        return ApiResponse(code=403, message="forbidden", error=str(exc))
+    return ApiResponse(code=400, message="invalid action request", error=str(exc))
+
+
+@router.get("/operations/daily-reports", response_model=ApiResponse)
+def list_daily_reports(
+    page: int = 1,
+    size: int = 20,
+    principal: AgentPrincipal = Depends(verify_agent_token),
+) -> ApiResponse:
+    if principal.role.upper() != "ADMIN":
+        return ApiResponse(code=403, message="Only admin can view daily reports", error="NO_PERMISSION")
+    page = max(int(page), 1)
+    size = min(max(int(size), 1), 100)
+    rows = mysql.query(
+        "SELECT id, report_date, title, summary, llm_generated, status, created_at "
+        "FROM operation_daily_report ORDER BY report_date DESC LIMIT %s OFFSET %s",
+        (size, (page - 1) * size),
+    )
+    total = mysql.query("SELECT COUNT(*) AS total FROM operation_daily_report")[0]["total"]
+    return ApiResponse(data={"list": rows, "total": total, "page": page, "size": size})
+
+
+@router.get("/operations/daily-reports/{report_date}", response_model=ApiResponse)
+def get_daily_report(
+    report_date: str,
+    principal: AgentPrincipal = Depends(verify_agent_token),
+) -> ApiResponse:
+    if principal.role.upper() != "ADMIN":
+        return ApiResponse(code=403, message="Only admin can view daily reports", error="NO_PERMISSION")
+    try:
+        datetime.strptime(report_date, "%Y-%m-%d")
+    except ValueError:
+        return ApiResponse(code=400, message="invalid report date", error="INVALID_DATE")
+    rows = mysql.query("SELECT * FROM operation_daily_report WHERE report_date = %s", (report_date,))
+    if not rows:
+        return ApiResponse(code=404, message="report not found", error="NOT_FOUND")
+    row = rows[0]
+    row["sections"] = json.loads(row.pop("sections_json") or "[]")
+    row["anomalies"] = json.loads(row.pop("anomalies_json") or "[]")
+    row["suggestions"] = json.loads(row.pop("suggestions_json") or "[]")
+    row["llmGenerated"] = bool(row.pop("llm_generated"))
+    row["reportDate"] = str(row.pop("report_date"))
+    return ApiResponse(data=row)
+
+
+@router.post("/operations/actions/preview", response_model=ApiResponse)
+def preview_operation_action(
+    request: ActionProposalRequest, principal: AgentPrincipal = Depends(verify_agent_token)
+) -> ApiResponse:
+    try:
+        preview = action_preview_service.preview(
+            actor_role=principal.role,
+            actor_id=principal.user_id,
+            action_type=request.type,
+            target_type=request.targetType,
+            target_id=request.targetId,
+            reason=request.reason,
+            proposed_payload=request.proposedPayload,
+            idempotency_key=request.idempotencyKey,
+            evidence=request.evidence,
+        )
+        return ApiResponse(data={"proposal": preview})
+    except (ActionError, PermissionError) as exc:
+        return _action_error_response(exc)
 
 
 @router.post("/workflows/article", response_model=ApiResponse)

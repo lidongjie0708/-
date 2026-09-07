@@ -23,6 +23,10 @@ public class RabbitMQAgentConfig {
     public static final String COMMENT_AGENT_QUEUE = "agent.comment.queue";
     public static final String COMMENT_AGENT_ROUTING_KEY = "agent.comment.routing.key";
 
+    /** Proposal events are auditable commands, not direct blog mutations. */
+    public static final String OPERATION_ACTION_QUEUE = "agent.operation-action.queue";
+    public static final String OPERATION_ACTION_ROUTING_KEY = "agent.operation-action.routing.key";
+
     // 死信交换机（复用原来点赞的死信配置）
     private static final String DLX_EXCHANGE = RabbitMQConfig.THUMB_DLX_EXCHANGE;
     private static final String DLX_ROUTING_KEY = RabbitMQConfig.THUMB_DLQ_ROUTING_KEY;
@@ -71,5 +75,18 @@ public class RabbitMQAgentConfig {
     @Bean
     public Binding commentAgentBinding() {
         return BindingBuilder.bind(commentAgentQueue()).to(agentExchange()).with(COMMENT_AGENT_ROUTING_KEY);
+    }
+
+    @Bean
+    public Queue operationActionQueue() {
+        return QueueBuilder.durable(OPERATION_ACTION_QUEUE)
+                .withArgument("x-dead-letter-exchange", DLX_EXCHANGE)
+                .withArgument("x-dead-letter-routing-key", DLX_ROUTING_KEY)
+                .build();
+    }
+
+    @Bean
+    public Binding operationActionBinding() {
+        return BindingBuilder.bind(operationActionQueue()).to(agentExchange()).with(OPERATION_ACTION_ROUTING_KEY);
     }
 }

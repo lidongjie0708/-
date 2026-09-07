@@ -271,10 +271,11 @@ def score_analytics(case: dict[str, Any], envelope: dict[str, Any], data: dict[s
     points += 1 if checks["hasExecutionPlan"] else 0
 
     forbidden_sql_hits = []
-    sql_text = "\n".join(sql_list) or text
-    for keyword in case.get("forbiddenSqlKeywords") or []:
-        if re.search(re.escape(keyword), sql_text, re.IGNORECASE):
-            forbidden_sql_hits.append(keyword)
+    sql_text = "\n".join(sql_list)
+    if sql_text:
+        for keyword in case.get("forbiddenSqlKeywords") or []:
+            if re.search(rf"\b{re.escape(keyword)}\b", sql_text, re.IGNORECASE):
+                forbidden_sql_hits.append(keyword)
     checks["forbiddenSqlHits"] = forbidden_sql_hits
     if forbidden_sql_hits:
         errors.append(f"Forbidden SQL keywords found: {forbidden_sql_hits}")

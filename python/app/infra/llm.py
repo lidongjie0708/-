@@ -12,15 +12,16 @@ class LlmClient:
     def __init__(self) -> None:
         self._model = None
         self._last_degraded_reason: str | None = None
-        if settings.deepseek_api_key:
+        if settings.llm_api_key:
             try:
                 from langchain_openai import ChatOpenAI
 
                 self._model = ChatOpenAI(
-                    model=settings.model,
-                    api_key=settings.deepseek_api_key,
-                    base_url=settings.deepseek_base_url or None,
+                    model=settings.llm_model,
+                    api_key=settings.llm_api_key,
+                    base_url=settings.llm_base_url or None,
                     temperature=settings.temperature,
+                    request_timeout=settings.llm_timeout,
                 )
             except Exception:
                 self._model = None
@@ -52,11 +53,11 @@ class LlmClient:
             return getattr(response, "content", str(response))
         except Exception as exc:
             self._last_degraded_reason = f"{type(exc).__name__}: {exc}"
-            return self._fallback_text(user)
+            return self._fallback_text()
 
     def stream_complete(self, system: str, user: str):
         if not self._model:
-            text = self._fallback_text(user)
+            text = self._fallback_text()
             for index in range(0, len(text), 24):
                 yield text[index : index + 24]
             return
@@ -88,34 +89,43 @@ class LlmClient:
             pass
         return fallback
 
-    def _fallback_text(self, prompt: str) -> str:
-        compact = " ".join(prompt.split())
-        return compact[:800]
+    def _fallback_text(self) -> str:
+        reason = self._last_degraded_reason or "unknown"
+        return (
+            "（系统降级）LLM 服务暂不可用，无法生成回答。"
+            f"错误原因：{reason}。请稍后重试。"
+        )
 
 
 llm_client = LlmClient()
 
 
-def llm_factory(model: str | None = None, client: Any | None = None, max_tokens: int | None = None) -> Any:
+def llm_factory(
+    model: str | None = None,
+    client: Any | None = None,
+    max_tokens: int | None = None,
+    timeout: int | None = None,
+) -> Any:
     """Create a LangChain chat model for evaluator/tool-calling paths.
 
-    The optional ``client`` parameter is accepted to match the OpenAI SDK style used by
-    RAGAS examples. LangChain only needs the same API key/base URL values, so this
-    factory reads them from settings and keeps the SDK client available to callers.
+    Uses the configured generation provider (settings.llm_*) so the tool-calling
+    agent loop and evaluators follow the same provider as chat/RAG responses.
     """
     try:
         from langchain_openai import ChatOpenAI
     except Exception:
         return None
 
-    if not settings.deepseek_api_key:
+    if not settings.llm_api_key:
         return None
+    max_tokens = max_tokens or settings.evaluator_max_tokens
     return ChatOpenAI(
-        model=model or settings.evaluator_llm_model,
-        api_key=settings.deepseek_api_key,
-        base_url=settings.deepseek_base_url or None,
+        model=model or settings.llm_model,
+        api_key=settings.llm_api_key,
+        base_url=settings.llm_base_url or None,
         temperature=settings.temperature,
-        max_tokens=max_tokens or settings.evaluator_max_tokens,
+        max_tokens=min(int(max_tokens), 32768),
+        request_timeout=timeout if timeout else settings.llm_timeout,
     )
 
 

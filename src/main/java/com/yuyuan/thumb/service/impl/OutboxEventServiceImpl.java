@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.yuyuan.thumb.mapper.OutboxEventMapper;
+import com.yuyuan.thumb.metrics.OutboxMetrics;
 import com.yuyuan.thumb.model.entity.OutboxEvent;
 import com.yuyuan.thumb.service.OutboxEventService;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ public class OutboxEventServiceImpl extends ServiceImpl<OutboxEventMapper, Outbo
     private static final int MAX_RETRY_COUNT = 8;
 
     private final ObjectMapper objectMapper;
+    private final OutboxMetrics outboxMetrics;
 
     @Override
     public void create(String eventType, String aggregateType, String aggregateId,
@@ -37,6 +39,7 @@ public class OutboxEventServiceImpl extends ServiceImpl<OutboxEventMapper, Outbo
         event.setRetryCount(0);
         event.setNextRetryTime(LocalDateTime.now());
         save(event);
+        outboxMetrics.recordCreated(eventType);
     }
 
     @Override
@@ -71,6 +74,10 @@ public class OutboxEventServiceImpl extends ServiceImpl<OutboxEventMapper, Outbo
         OutboxEvent event = getById(id);
         int retryCount = event == null || event.getRetryCount() == null ? 1 : event.getRetryCount() + 1;
         String nextStatus = retryCount >= MAX_RETRY_COUNT ? "DEAD" : "FAILED";
+        outboxMetrics.recordRetry(retryCount);
+        if ("DEAD".equals(nextStatus) && event != null) {
+            outboxMetrics.recordDead(event.getEventType());
+        }
         update(new LambdaUpdateWrapper<OutboxEvent>()
                 .eq(OutboxEvent::getId, id)
                 .set(OutboxEvent::getStatus, nextStatus)

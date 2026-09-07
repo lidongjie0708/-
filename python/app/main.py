@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
 from app.config import settings
+from app.rag.memory_summary import start_memory_summary_worker, stop_memory_summary_worker
 
 
 app = FastAPI(title=settings.app_name, debug=settings.debug)
@@ -17,6 +18,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+
+
+@app.on_event("startup")
+def start_background_workers() -> None:
+    start_memory_summary_worker()
+
+
+@app.on_event("shutdown")
+def stop_background_workers() -> None:
+    stop_memory_summary_worker()
 
 
 @app.get("/actuator/health")

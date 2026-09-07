@@ -37,6 +37,9 @@
             @click="open = false"
             >AI 助手</router-link
           >
+          <router-link v-if="isAdmin" to="/agent/operations" @click="open = false"
+            >运营中心</router-link
+          >
           <router-link v-if="isAdmin" to="/admin" @click="open = false"
             >管理后台</router-link
           >

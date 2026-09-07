@@ -5,6 +5,7 @@ from typing import Any
 
 from app.config import settings
 from app.infra import mysql
+from app.rag.memory_summary import enqueue_summary_task
 
 
 class ConversationMemoryStore:
@@ -71,7 +72,7 @@ class ConversationMemoryStore:
             "citationTitles": [item.get("title") for item in citations[:5] if item.get("title")],
             "citationArticleIds": [item.get("articleId") for item in citations[:5] if item.get("articleId")],
         }
-        self._append_to_db(session_id, user_id, turn)
+        mysql_saved = self._append_to_db(session_id, user_id, turn)
         if self._redis is not None:
             try:
                 pipeline = self._redis.pipeline(transaction=True)
@@ -79,10 +80,10 @@ class ConversationMemoryStore:
                 pipeline.ltrim(key, -settings.rag_memory_turns, -1)
                 pipeline.expire(key, settings.conversation_ttl_seconds)
                 pipeline.execute()
-                return True
+                return mysql_saved
             except Exception:
                 pass
-        return False
+        return mysql_saved
 
     def delete(self, session_id: str | None, user_id: int | None = None) -> None:
         if not session_id:
@@ -118,9 +119,9 @@ class ConversationMemoryStore:
                 pass
         return "stateless"
 
-    def _append_to_db(self, session_id: str, user_id: int | None, turn: dict[str, Any]) -> None:
+    def _append_to_db(self, session_id: str, user_id: int | None, turn: dict[str, Any]) -> bool:
         if not settings.rag_long_term_memory_enabled:
-            return
+            return False
         try:
             with mysql.get_connection() as conn:
                 with conn.cursor() as cursor:
@@ -139,6 +140,7 @@ class ConversationMemoryStore:
                             json.dumps(turn.get("citationArticleIds") or [], ensure_ascii=False, default=str),
                         ),
                     )
+                    turn_id = int(cursor.lastrowid)
                     cursor.execute(
                         """
                         SELECT COUNT(*) AS total
@@ -149,9 +151,10 @@ class ConversationMemoryStore:
                     )
                     total = int((cursor.fetchone() or {}).get("total") or 0)
             if total and total % max(settings.rag_memory_summary_every_turns, 1) == 0:
-                self._refresh_summary(session_id, user_id, total)
+                enqueue_summary_task(session_id, user_id, turn_id)
+            return True
         except Exception:
-            return
+            return False
 
     def _get_recent_turns_from_db(self, session_id: str, user_id: int | None) -> list[dict[str, Any]]:
         if not settings.rag_long_term_memory_enabled:
@@ -180,35 +183,6 @@ class ConversationMemoryStore:
             return turns
         except Exception:
             return []
-
-    def _refresh_summary(self, session_id: str, user_id: int | None, turn_count: int) -> None:
-        rows = mysql.query(
-            """
-            SELECT question, answer, citation_titles_json
-            FROM rag_conversation_turn
-            WHERE session_id = %s AND user_id <=> %s
-            ORDER BY id DESC
-            LIMIT %s
-            """,
-            (session_id, user_id, max(settings.rag_memory_summary_every_turns, 1)),
-        )
-        prior = self.get_summary(session_id, user_id)
-        summary = _build_local_summary(prior, list(reversed(rows)))
-        with mysql.get_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    """
-                    INSERT INTO rag_conversation_summary (
-                        session_id, user_key, user_id, summary_text, turn_count
-                    ) VALUES (%s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE
-                        summary_text = VALUES(summary_text),
-                        turn_count = VALUES(turn_count),
-                        updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (session_id, _user_key(user_id), user_id, summary, turn_count),
-                )
-
 
 conversation_memory = ConversationMemoryStore()
 
@@ -260,24 +234,3 @@ def _json_list(raw: Any) -> list[Any]:
         return value if isinstance(value, list) else []
     except Exception:
         return []
-
-
-def _build_local_summary(prior_summary: str, rows: list[dict[str, Any]]) -> str:
-    lines = [prior_summary.strip()] if prior_summary.strip() else []
-    for row in rows:
-        titles = ", ".join(_json_list(row.get("citation_titles_json"))[:3])
-        lines.append(
-            " ".join(
-                part
-                for part in [
-                    f"Q: {row.get('question', '')}",
-                    f"A: {str(row.get('answer', ''))[:260]}",
-                    f"Citations: {titles}" if titles else "",
-                ]
-                if part
-            )
-        )
-    summary = "\n".join(lines)
-    if len(summary) <= settings.rag_memory_summary_max_chars:
-        return summary
-    return summary[-settings.rag_memory_summary_max_chars :]

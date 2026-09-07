@@ -49,13 +49,13 @@ class RagAnswerCache:
         question: str,
         role: str,
         visible_scopes: list[str],
-        docs: list[dict[str, Any]],
+        docs: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
         exact = self.get(key)
         if exact:
             exact["cacheMatch"] = {"type": "exact", "score": 1.0}
             return exact
-        return self.semantic_get(question, role, visible_scopes, docs)
+        return self.semantic_get(question, role, visible_scopes)
 
     def set(
         self,
@@ -74,7 +74,7 @@ class RagAnswerCache:
                 settings.rag_answer_cache_ttl_seconds,
                 json.dumps(value, ensure_ascii=False, default=str),
             )
-            if question and role and visible_scopes is not None and docs is not None:
+            if question and role and visible_scopes is not None:
                 self.semantic_set(key, question, role, visible_scopes, docs)
             return True
         except Exception:
@@ -85,7 +85,7 @@ class RagAnswerCache:
         question: str,
         role: str,
         visible_scopes: list[str],
-        docs: list[dict[str, Any]],
+        docs: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
         if (
             not settings.rag_answer_cache_enabled
@@ -94,7 +94,7 @@ class RagAnswerCache:
         ):
             return None
         try:
-            namespace = build_semantic_cache_namespace(role, visible_scopes, docs)
+            namespace = build_semantic_cache_namespace(role, visible_scopes)
             query_vector = embedding_client.embed_query(_normalize_question(question))
             stack_match = self._redis_stack_vector_get(namespace, query_vector)
             if stack_match:
@@ -130,7 +130,7 @@ class RagAnswerCache:
         question: str,
         role: str,
         visible_scopes: list[str],
-        docs: list[dict[str, Any]],
+        docs: list[dict[str, Any]] | None = None,
     ) -> bool:
         if (
             not settings.rag_answer_cache_enabled
@@ -139,7 +139,7 @@ class RagAnswerCache:
         ):
             return False
         try:
-            namespace = build_semantic_cache_namespace(role, visible_scopes, docs)
+            namespace = build_semantic_cache_namespace(role, visible_scopes)
             vector = embedding_client.embed_query(_normalize_question(question))
             self._redis_stack_vector_set(key, namespace, question, role, visible_scopes, docs, vector)
             index_key = f"blogslike:rag:semantic:index:{namespace}"
@@ -149,7 +149,7 @@ class RagAnswerCache:
                 "questionVector": vector,
                 "role": role.upper(),
                 "visibleScopes": sorted(scope.upper() for scope in visible_scopes),
-                "docFingerprint": build_doc_fingerprint(docs),
+                "docFingerprint": build_doc_fingerprint(docs) if docs is not None else [],
                 "createdAt": int(time.time()),
             }
             pipeline = self._redis.pipeline(transaction=True)
@@ -228,7 +228,7 @@ class RagAnswerCache:
         question: str,
         role: str,
         visible_scopes: list[str],
-        docs: list[dict[str, Any]],
+        docs: list[dict[str, Any]] | None,
         vector: list[float],
     ) -> bool:
         if (
@@ -247,7 +247,11 @@ class RagAnswerCache:
                 "question": question,
                 "role": role.upper(),
                 "visible_scopes": json.dumps(sorted(scope.upper() for scope in visible_scopes), ensure_ascii=False),
-                "doc_fingerprint": json.dumps(build_doc_fingerprint(docs), ensure_ascii=False, default=str),
+                "doc_fingerprint": json.dumps(
+                    build_doc_fingerprint(docs) if docs is not None else [],
+                    ensure_ascii=False,
+                    default=str,
+                ),
                 "created_at": str(int(time.time())),
                 "question_vector": _vector_bytes(vector),
             }
@@ -308,42 +312,45 @@ class RagAnswerCache:
 
 
 rag_answer_cache = RagAnswerCache()
+ANSWER_POLICY_VERSION = "focused-evidence-v2"
 
 
 def build_answer_cache_key(
     question: str,
     role: str,
     visible_scopes: list[str],
-    docs: list[dict[str, Any]],
 ) -> str:
     payload = {
+        "answerPolicy": ANSWER_POLICY_VERSION,
         "question": _normalize_question(question),
         "role": role.upper(),
         "visibleScopes": sorted(scope.upper() for scope in visible_scopes),
-        "docs": build_doc_fingerprint(docs),
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
     return f"blogslike:rag:answer:{digest}"
 
 
-def build_semantic_cache_namespace(role: str, visible_scopes: list[str], docs: list[dict[str, Any]]) -> str:
+def build_semantic_cache_namespace(role: str, visible_scopes: list[str]) -> str:
     payload = {
+        "answerPolicy": ANSWER_POLICY_VERSION,
         "role": role.upper(),
         "visibleScopes": sorted(scope.upper() for scope in visible_scopes),
-        "docs": build_doc_fingerprint(docs),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")).hexdigest()
 
 
 def build_doc_fingerprint(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
+    return sorted(
+        (
         {
             "id": doc.get("id"),
             "hash": doc.get("metadata", {}).get("contentHash"),
-            "score": round(float(doc.get("rerankScore", doc.get("score", 0.0)) or 0.0), 4),
         }
-        for doc in docs[: settings.rag_rerank_top_k]
-    ]
+            for doc in docs[: settings.rag_rerank_top_k]
+            if doc.get("id")
+        ),
+        key=lambda item: str(item["id"]),
+    )
 
 
 def _normalize_question(question: str) -> str:
